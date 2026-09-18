@@ -332,8 +332,6 @@ assembly101_operator_variation.ipynb
 
 ## 📄 Data and licence
 
-Code is MIT. No dataset content is redistributed here.
-
 Assembly101 is CC BY-NC 4.0 and obtained from the maintainers. This is a
 personal, non-commercial project.
 
