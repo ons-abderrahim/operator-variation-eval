@@ -20,12 +20,18 @@ On a production line that credit disappears. A new operator starts, or an
 existing one works differently after a shift change, and the model meets
 someone it has never seen.
 
-This repo measures that. Three findings so far. Assembly101's official splits
-contain **no operator holdout at all**. Operator identity is **recoverable from
-the label stream** before any appearance model is involved. And on procedural
-structure alone the **aggregate gap is zero**, while individual operators still
-differ by 15 points, which is the case for reporting per-operator scores rather
-than a mean.
+This repo measures that. Four findings so far, all on the real annotations:
+
+1. Assembly101's official splits contain **no operator holdout at all**. Every
+   test recording belongs to someone in the training set.
+2. Operator identity is **recoverable from the label stream** at 5.5x chance,
+   before any appearance model is involved.
+3. A model with **no visual input matches the published video baseline** on verb
+   recognition, so much of what the benchmark measures is procedural context.
+4. The **operator gap is zero** while individual operators differ by 19 points,
+   which is the case for reporting per-operator scores rather than a mean. The
+   same harness does find a 2.8 point within-recording leak, so the operator
+   null is an absence rather than a blind spot.
 
 ---
 
@@ -38,7 +44,7 @@ than a mean.
 | Operator overlap in official splits | Done, measured |
 | Operator variation from labels | Done, measured |
 | Operator identification from labels | Done, measured |
-| Split comparison on procedural structure | Done, measured |
+| Split comparison on procedural structure | Done, two model classes |
 | Per-operator spread | Done, measured |
 | Evaluation harness | Done, 18 tests passing |
 | Same comparison on TSM visual features | Blocked, access request pending |
@@ -80,19 +86,22 @@ Two protocols would conflate two different leaks. Adding B means the operator
 effect can be isolated: A to B measures the within-recording leak, B to C
 measures the operator leak on its own.
 
-Classifier is a standardised multinomial logistic regression. Keeping it simple
-is intentional, since a stronger model moves every number and hides the gaps
-being measured.
+Two classifiers, both run through all three protocols: a standardised
+multinomial logistic regression and gradient boosted trees. Reporting both
+matters, because the leak turns out to depend on capacity and a single model
+would have hidden that.
 
 Two feature sets:
 
 | Features | Question | State |
 |---|---|---|
-| Duration, gap, position, neighbouring actions | Is procedural structure operator dependent? | Done |
+| Duration, gap, position, toy, neighbouring actions | Is procedural structure operator dependent? | Done |
 | Mean-pooled TSM visual features | Is appearance operator dependent? | Blocked on access |
 
-Reported: macro-F1 per protocol, the two gaps, and the spread of per-operator
-scores under protocol C.
+Reported per protocol: macro-F1, weighted-F1, top-1 and top-k accuracy, the two
+gaps, and the spread of per-operator scores under protocol C. macro-F1 alone is
+misleading on a label set with 81x class imbalance, so it is never reported on
+its own.
 
 ---
 
@@ -143,56 +152,121 @@ splits make it available on both sides.
 
 The visual features are still gated, so this runs the protocol comparison on
 features derived from annotations only: action duration, gap to the previous
-action, relative position in the recording, and the identity of the preceding
-and following actions. **This is not the vision experiment.** It asks a
-narrower question: is the *procedural structure* of the work operator
-dependent?
+action, relative and absolute position in the recording, duration normalised
+within the recording, toy identity, and the identity of the two actions either
+side. **This is not the vision experiment.** It asks a narrower question: is the
+procedural structure of the work operator dependent?
 
-Three protocols rather than two, so the leak can be decomposed. Holding out
-recordings removes the within-recording leak but still lets the same person
-appear on both sides. Holding out operators removes both. The difference
-between those two isolates the operator effect.
+Label space is the 18 verbs these features can represent. The six `attempt to X`
+classes are excluded because an attempted screw has the same duration and the
+same neighbouring actions as a successful one, so the distinction lives in the
+video and nowhere in these features. The 24 verb numbers are reported below too.
 
-| Protocol | Macro-F1 |
+Gradient boosted trees, 5 fold, 18 verbs:
+
+| Protocol | macro-F1 | weighted-F1 | top-1 |
+|---|---|---|---|
+| Random segments | 0.546 | 0.619 | 0.632 |
+| Recordings held out | 0.518 | 0.599 | 0.616 |
+| Operators held out | 0.515 | 0.598 | 0.614 |
+
+| Decomposition | Gap |
+|---|---|
+| Within-recording leak | **+0.028** |
+| Operator leak, isolated | +0.004 |
+
+**A leak exists, and it is not the operator one.** Holding out whole recordings
+costs 2.8 points of macro-F1. Holding out whole operators costs nothing beyond
+that. The harness detects a real leak sitting immediately next to the one it
+fails to find, which is what makes the operator null credible rather than
+ambiguous.
+
+### The leak scales with model capacity
+
+The same comparison with plain logistic regression on a narrower feature set:
+
+| Protocol | macro-F1 |
 |---|---|
 | Random segments | 0.3275 |
 | Recordings held out | 0.3270 |
 | Operators held out | 0.3275 |
 
-| Decomposition | Gap |
-|---|---|
-| Within-recording leak | +0.0006 |
-| Operator leak, isolated | -0.0005 |
-| Total | +0.0001 |
+A linear model finds no leak at all. A boosted one finds 2.8 points. Whatever a
+production model does at scale, the within-recording leak gets worse with
+capacity, not better.
 
-**The aggregate gap is zero.** On procedural structure alone, a model
-generalises to an unseen operator exactly as well as to a seen one.
+### Full metric set
+
+Operators held out, 18 verbs, 3 fold. Top-k is reported because macro-F1 over an
+imbalanced label set is the harshest single number available and says little on
+its own.
+
+| Metric | Value | Chance |
+|---|---|---|
+| macro-F1 | 0.508 | |
+| weighted-F1 | 0.594 | |
+| top-1 | 0.610 | 0.056 |
+| top-2 | 0.757 | 0.111 |
+| top-3 | 0.836 | 0.167 |
+| top-5 | 0.920 | 0.278 |
+
+macro-F1 is dragged down by rare classes. Support ranges from 15,969 segments
+for `pick up` to 197 for `shake`, an 81x imbalance, and macro-F1 weights all 18
+equally. Head classes score well: `clap` 0.796, `unscrew` 0.736, `screw` 0.660,
+`pick up` 0.621.
+
+### Against the published visual baseline
+
+On the **full 24 verb** space, no pixels of any kind:
+
+| Model | Input | top-1 |
+|---|---|---|
+| This work, operators held out | duration and neighbouring labels | 0.576 |
+| This work, random split | duration and neighbouring labels | 0.593 |
+| Assembly101 TSM, fixed and egocentric | full video | 0.585 |
+| Assembly101 TSM, egocentric | full video | 0.470 |
+| Assembly101 TSM, fixed views | full video | 0.640 |
+
+A model that never sees an image matches the published fixed plus egocentric
+video baseline and beats the egocentric one by twelve points. A large part of
+what this verb benchmark measures is recoverable from procedural context alone,
+so a model can post a respectable number while learning little about what hands
+and objects are doing.
+
+That is a third way the benchmark flatters a model, alongside the absent
+operator holdout and the operator identity leaking through the labels.
 
 ### The mean hides the spread
 
+Operators held out, 18 verbs:
+
 | | |
 |---|---|
-| Per-operator mean | 0.327 |
-| Standard deviation | 0.0285 |
-| Worst | 0.241 (operator 9074) |
-| Best | 0.393 (operator 9082) |
-| Range | 0.151 |
+| Per-operator mean | 0.518 |
+| Worst | 0.404 (operator 9074) |
+| Best | 0.599 (operator 9036) |
+| Range | 0.195 |
 
 ![split comparison](results/fig_split_comparison.png)
 
-A 15 point range between the hardest and easiest operator, under a protocol
-whose aggregate says operator identity does not matter. A permutation test
-shuffling which operator each recording belongs to, keeping group sizes fixed,
-gives a null range of 0.097 on average. The observed range exceeds all 12
-permutations, p = 0.077, which is the minimum achievable at 12 permutations,
-so more would be needed to claim a conventional threshold.
+A 19 point range under a protocol whose aggregate says operator identity does
+not matter. Two checks that this is not noise:
+
+- A permutation test shuffling which operator each recording belongs to, group
+  sizes preserved, gives a null range averaging 0.097. The observed range
+  exceeds all 12 permutations, p = 0.077, which is the floor at 12 permutations.
+  Suggestive rather than significant.
+- Per-operator scores correlate at Spearman 0.83 (p = 3e-13) between logistic
+  regression and gradient boosting. Operator 9074 is hardest under every model
+  configuration tried, and 8 of the hardest 10 overlap. Operator difficulty is a
+  property of the people, not an artefact of one classifier.
 
 ### What this rules out
 
-There are two candidate sources of an operator gap in a vision model: *what*
-people do and when, or *how they look* doing it. This experiment isolates the
-first and finds no aggregate effect. If the TSM experiment does show a gap, it
-comes from appearance and motion style rather than from procedural structure.
+There are two candidate sources of an operator gap in a vision model: what
+people do and when, or how they look doing it. This isolates the first and finds
+no aggregate effect, using a model that demonstrably can detect a leak. If the
+TSM experiment shows a gap, it comes from appearance and motion style.
 
 ### Still pending
 
@@ -272,6 +346,18 @@ classes is driven by classes where a person has one or two segments, so the
 score moves on sampling noise instead of operator identity. 24 verbs give every
 operator over a thousand segments, enough support per class to be stable.
 
+**18 verbs for the main table, 24 for the baseline comparison.** The six
+`attempt to X` classes are excluded from the main results because these features
+provably cannot represent them: an attempt and a success share duration,
+position and neighbouring actions, and differ only in outcome, which is visible
+in the video alone. Both label spaces are reported, and the comparison against
+the published baseline uses the full 24 so it is like for like.
+
+**Top-k alongside macro-F1.** Not instead of it. macro-F1 weights `shake`
+(197 segments) equally with `pick up` (15,969), so it understates a model that
+handles the common cases well. Reporting one number would mean choosing which
+story to tell, so all of them are in the table with the chance rate beside.
+
 **Each person scored on their own classes.** `participant_score` averages over
 the classes that participant actually performs. Using the full label set would
 penalise someone for classes missing from their ground truth, which measures
@@ -329,8 +415,7 @@ assembly101_operator_variation.ipynb
 
 ---
 
-## 📄 Data and licence
-
+## 📄 Data
 Assembly101 is CC BY-NC 4.0 and obtained from the maintainers. This is a
 personal, non-commercial project.
 
